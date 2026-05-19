@@ -1,6 +1,28 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.Python
+*.egg-info/
+
+# Virtual environment
+venv/
+.venv/
+
+# Environment variables — never commit real keys
 .env
-output/
-.DS_Store
+
+# Generated output files — committed separately as samples
+output/*.json
+output/*.csv
+output/*.db
+
+# Database files — generated at runtime, not committed
 *.db
+.DS_Store
+
+# VS Code
+.vscode/
+
+# pytest cache
+.pytest_cache/
