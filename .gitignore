@@ -12,9 +12,6 @@ venv/
 # Environment variables — never commit real keys
 .env
 
-# Input documents
-documents/
-
 # Generated outputs
 output/
 
