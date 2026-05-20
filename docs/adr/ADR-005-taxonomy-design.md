@@ -1,8 +1,8 @@
 # ADR-005: Taxonomy Design — Database vs Hardcoded
 
 **Status:** Accepted  
-**Date:** 2024-11  
-**Deciders:** Engineering Lead  
+**Date:** 2026-05  
+**Approvers:** Engineering Lead  
 **Decision:** Option 2 — Database-driven taxonomy with SQLite
 
 ---

@@ -12,10 +12,11 @@ venv/
 # Environment variables — never commit real keys
 .env
 
-# Generated output files — committed separately as samples
-output/*.json
-output/*.csv
-output/*.db
+# Input documents
+documents/
+
+# Generated outputs
+output/
 
 # Database files — generated at runtime, not committed
 *.db

@@ -1,5 +1,5 @@
 openai
-pdfplumber
-pillow
-python-dotenv
+pypdf
 pytest
+python-dotenv
+sqlite3

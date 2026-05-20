@@ -3,44 +3,35 @@ classifier.py
 =============
 Sends a PDF to OpenAI GPT-4o-mini and returns a document classification.
 
-HOW IT WORKS
-------------
-We send the raw PDF bytes directly to GPT-4o-mini. The model handles
-both text-based and scanned/image PDFs natively — no separate extraction
-step needed. See ADR-002 for why we chose this approach over building
-a custom text/vision extraction pipeline.
+The classifier uses OpenAI's Files API + Responses API flow:
+1. Upload the PDF as user data via the Files API.
+2. Reference the uploaded file_id in a Responses API call.
+3. Parse the model's structured JSON response.
+4. Delete the uploaded file after classification to avoid accumulation.
 
-The model returns a structured JSON response with:
-- document_type: one of the configured taxonomy types or "Unknown"
+The model returns:
+- document_type: one of the configured document types or "Unknown"
 - confidence: 0.0 to 1.0
-- reasoning: plain English explanation of the classification decision
+- reasoning: short explanation of the classification decision
 
-WHY TEMPERATURE=0
------------------
-We set temperature=0 to make the model as deterministic as possible.
-The same document should always produce the same classification.
-This matters for debugging, regression testing, and coordinator trust.
+WHY FILES API + RESPONSES API
+------------------------------
+Sending PDFs via chat.completions image_url fails with an invalid MIME
+type error. The Files API + Responses API is the correct flow for PDF
+ingestion. This was validated during end-to-end testing. See ADR-002.
 
-WHY WE PIN THE MODEL VERSION
------------------------------
-Model behavior can change between versions. We pin the exact version
-string so a model update never silently changes classification results
-in production. See ADR-004.
+WHY TEMPERATURE IS NOT SET ON RESPONSES API
+--------------------------------------------
+The Responses API does not support a temperature parameter directly.
+Determinism is achieved through explicit prompt instructions and
+structured JSON output requirements.
 
-WHY TAXONOMY COMES FROM THE DATABASE
-------------------------------------
-Business taxonomy belongs in configuration/data, not hardcoded source code.
-Adding support for a new DME workflow should be a database operation,
-not a code deployment.
-
-The classifier dynamically builds its prompt from SQLite taxonomy data.
-See ADR-005 for the taxonomy design decision.
-
-WHY WE MOCK IN TESTS
----------------------
-Tests never make real OpenAI API calls. Real calls cost money, require
-a network connection, and make tests slow and fragile. The real API
-is tested once manually by running the full pipeline on actual documents.
+WHY DOCUMENT TYPES COME FROM THE DATABASE
+------------------------------------------
+Document types are stored in SQLite, not hardcoded. The classifier
+queries them at runtime and builds the prompt dynamically. Adding
+support for a new DME equipment type is a database insert — no code
+change required. See ADR-005.
 """
 
 import json
@@ -55,60 +46,40 @@ from src.database import get_document_types
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
 MODEL = "gpt-4o-mini"
 CONFIDENCE_THRESHOLD = 0.80
 
-# Module-level client — instantiated lazily on first classify() call, reused after.
+# Module-level client — lazily initialized on first classify() call.
 # Tests patch this directly: patch("src.classifier.openai_client")
-# None at import time so tests can import the module without OPENAI_API_KEY set.
 openai_client: OpenAI | None = None
 
-
-# ---------------------------------------------------------------------------
-# Dynamic prompt generation
-# ---------------------------------------------------------------------------
 
 def _build_classification_prompt(
     equipment_type: str = "CPAP",
 ) -> tuple[str, list[str]]:
     """
-    Build the classification prompt dynamically from the taxonomy database.
-
-    Business taxonomy lives in SQLite rather than hardcoded source code.
-    This allows adding new DME workflows and document types without
-    changing classifier logic.
+    Build the classification prompt from database-backed document types.
 
     Args:
-        equipment_type: DME equipment category.
+        equipment_type: Equipment category to query. Default "CPAP".
 
     Returns:
-        Tuple of:
-        - dynamically generated prompt
-        - list of valid document type names
+        Tuple of (prompt string, list of valid document type names).
     """
     document_types = get_document_types(equipment_type)
-
     valid_document_types = [doc["name"] for doc in document_types]
 
     sections = []
-
     for index, doc in enumerate(document_types, start=1):
         sections.append(
-            f"""
-{index}. {doc['name']}
-   - {doc['description']}
-   - Key identifiers: {doc['key_identifiers']}
-"""
+            f"{index}. {doc['name']}\n"
+            f"   - {doc['description']}\n"
+            f"   - Key identifiers: {doc['key_identifiers']}\n"
         )
 
     taxonomy_section = "\n".join(sections)
 
-    prompt = f"""
-You are a document classifier for a DME (Durable Medical Equipment) provider.
+    prompt = f"""You are a document classifier for a DME (Durable Medical Equipment) provider.
 Your job is to identify the type of each medical document in a patient file.
 
 DOCUMENT TYPES
@@ -120,66 +91,61 @@ Classify the document as exactly one of these types:
 UNKNOWN DOCUMENTS
 -----------------
 If the document does not clearly match any of the above types,
-classify it as "Unknown". Do not guess.
+classify it as "Unknown". Do not guess. Unknown documents are
+routed to human review.
 
 OUTPUT FORMAT
 -------------
-Respond with valid JSON only. No extra text.
+Respond with valid JSON only. No extra text before or after the JSON.
 
 {{
   "document_type": "<valid type or Unknown>",
   "confidence": <float between 0.0 and 1.0>,
-  "reasoning": "<short explanation>"
-}}
-"""
+  "reasoning": "<one or two sentences explaining your classification>"
+}}"""
 
     return prompt, valid_document_types
 
-
-# ---------------------------------------------------------------------------
-# Data model
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ClassificationResult:
     """
     The output of the classification step for a single document.
 
-    Every field is populated for every document — there are no optional
-    fields. This makes downstream processing (storage, completeness check)
-    predictable and easy to test.
+    Every field is populated for every document — no optional fields.
+    This makes downstream processing predictable and easy to test.
     """
+
     filename: str
-    document_type: str
-    confidence: float
-    patient_id: str
-    reasoning: str
-    requires_review: bool
-    model: str
-    processed_at: str
+    document_type: str       # One of the configured types or "Unknown"
+    confidence: float        # 0.0 to 1.0
+    patient_id: str          # Parsed from filename — "Prescription 3.pdf" → "3"
+    reasoning: str           # Model explanation — useful for debugging and auditing
+    requires_review: bool    # True if confidence < threshold OR type is Unknown
+    model: str               # Exact model version — never changes silently
+    processed_at: str        # ISO 8601 timestamp
     pages_processed: int
 
 
-# ---------------------------------------------------------------------------
-# Core function
-# ---------------------------------------------------------------------------
-
 def classify(
     content,
-    confidence_threshold: float = CONFIDENCE_THRESHOLD
+    confidence_threshold: float = CONFIDENCE_THRESHOLD,
 ) -> ClassificationResult:
     """
-    Send a PDF to GPT-4o-mini and return a document classification.
+    Upload a PDF to OpenAI and return a document classification.
 
-    The PDF bytes are sent directly to the model. GPT-4o-mini handles
-    both text-based and scanned/image PDFs natively.
+    Uses the Files API + Responses API flow. Uploads the PDF,
+    classifies it, then deletes the uploaded file. Classification failures 
+    degrade gracefully to Unknown with requires_review=True.
 
     Args:
         content: ExtractedContent from extractor.py
-        confidence_threshold: Minimum confidence threshold.
+                 (filename, raw PDF bytes, page count).
+        confidence_threshold: Minimum confidence to auto-route.
+                              Default 0.80.
 
     Returns:
-        ClassificationResult with type, confidence, reasoning, and metadata.
+        ClassificationResult — always returns, never raises.
     """
     global openai_client
 
@@ -188,54 +154,67 @@ def classify(
 
     processed_at = datetime.now(timezone.utc).isoformat()
     patient_id = _parse_patient_id(content.filename)
-
     prompt, valid_document_types = _build_classification_prompt()
 
+    uploaded_file_id = None
+
     try:
-        response = openai_client.chat.completions.create(
+        # Step 1 — Upload the PDF via Files API
+        uploaded_file = openai_client.files.create(
+            file=(content.filename, content.file_bytes, "application/pdf"),
+            purpose="user_data",
+        )
+        uploaded_file_id = uploaded_file.id
+
+        # Step 2 — Classify via Responses API
+        response = openai_client.responses.create(
             model=MODEL,
-            temperature=0,
-            messages=[
+            input=[
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "text",
-                            "text": prompt
+                            "type": "input_file",
+                            "file_id": uploaded_file_id,
                         },
                         {
-                            "type": "text",
-                            "text": f"Please classify this document. Filename: {content.filename}"
+                            "type": "input_text",
+                            "text": f"{prompt}\n\nFilename: {content.filename}",
                         },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:application/pdf;base64,{_to_base64(content.file_bytes)}"
-                            }
-                        }
-                    ]
+                    ],
                 }
             ],
-            max_tokens=300
         )
 
-        raw_content = response.choices[0].message.content
-        classification = _parse_response(raw_content)
+        classification = _parse_response(response.output_text)
 
     except Exception as e:
+        # Never crash the pipeline on a single document failure.
+        # Log the error, mark for human review, and keep going.
         logger.error(f"Classification failed for {content.filename}: {e}")
-
         classification = {
             "document_type": "Unknown",
             "confidence": 0.0,
-            "reasoning": f"Classification failed due to an error: {str(e)}"
+            "reasoning": f"Classification failed due to an error: {str(e)}",
         }
+
+    finally:
+        # Step 3 — Always clean up the uploaded file.
+        # Files accumulate in the OpenAI account if not deleted.
+        if uploaded_file_id is not None:
+            try:
+                openai_client.files.delete(uploaded_file_id)
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"Could not delete uploaded file {uploaded_file_id}: {cleanup_error}"
+                )
 
     document_type = classification.get("document_type", "Unknown")
     confidence = float(classification.get("confidence", 0.0))
     reasoning = classification.get("reasoning", "No reasoning provided.")
 
-    # Validate returned taxonomy type
+    # If the model returns something outside the known document types,
+    # treat it as Unknown rather than passing an unexpected value downstream.
     if document_type not in valid_document_types + ["Unknown"]:
         logger.warning(
             f"Unexpected document type '{document_type}' "
@@ -243,6 +222,9 @@ def classify(
         )
         document_type = "Unknown"
 
+    # requires_review is True when:
+    # 1. Confidence is below threshold — model is uncertain
+    # 2. Document type is Unknown — didn't match any known category
     requires_review = (
         confidence < confidence_threshold
         or document_type == "Unknown"
@@ -262,42 +244,39 @@ def classify(
         requires_review=requires_review,
         model=MODEL,
         processed_at=processed_at,
-        pages_processed=content.page_count
+        pages_processed=content.page_count,
     )
 
 
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
-
 def _parse_patient_id(filename: str) -> str:
     """
-    Extract the patient number from a filename.
+    Extract patient number from filename.
 
-    Examples:
-        "Prescription 1.pdf" → "1"
-        "Sleep Study Report 3.pdf" → "3"
-        "unknown_doc.pdf" → "unknown"
+    "Prescription 1.pdf" → "1"
+    "Sleep Study Report 3.pdf" → "3"
+    "unknown_doc.pdf" → "unknown"
+
+    NOTE: In production, patient ID comes from a database or document
+    metadata — not the filename. This works for this exercise because
+    documents are named consistently.
     """
-    match = re.search(r"(\\d+)", filename)
+    match = re.search(r"(\d+)", filename)
     return match.group(1) if match else "unknown"
-
-
-def _to_base64(file_bytes: bytes) -> str:
-    """Encode bytes to base64 string for the OpenAI API."""
-    import base64
-    return base64.b64encode(file_bytes).decode("utf-8")
 
 
 def _parse_response(raw_content: str) -> dict:
     """
-    Parse the JSON response from OpenAI safely.
+    Parse JSON response from OpenAI.
 
-    Returns Unknown if parsing fails.
+    Handles two failure modes gracefully:
+    1. Response is not valid JSON
+    2. Response is missing required fields
+
+    Returns a safe Unknown default rather than raising.
     """
     try:
         cleaned = raw_content.strip()
-
+        # Strip markdown code fences if model wrapped the JSON
         if cleaned.startswith("```"):
             cleaned = re.sub(r"```(?:json)?", "", cleaned).strip()
 
@@ -313,9 +292,8 @@ def _parse_response(raw_content: str) -> dict:
             f"Could not parse model response: {e}. "
             f"Raw: {raw_content[:200]}"
         )
-
         return {
             "document_type": "Unknown",
             "confidence": 0.0,
-            "reasoning": "Could not parse model response — flagged for human review."
+            "reasoning": "Could not parse model response — flagged for human review.",
         }

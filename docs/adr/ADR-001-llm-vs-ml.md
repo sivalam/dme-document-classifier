@@ -1,7 +1,7 @@
 # ADR-001: Classification Approach — LLM vs Traditional ML
 
 **Status:** Accepted  
-**Date:** 2024-11  
+**Date:** 2026-05  
 **Deciders:** Engineering Lead  
 **Decision:** Option 3 — LLM with zero-shot prompting
 
@@ -9,7 +9,7 @@
 
 ## Context
 
-We need to classify 22 medical PDF documents into 6 known categories. The corpus is small, documents vary significantly in format and quality, and there is no existing labeled training dataset. We need to choose a classification approach.
+We need to classify 21 medical PDF documents into 6 known categories. The corpus is small, documents vary significantly in format and quality, and there is no existing labeled training dataset. We need to choose a classification approach.
 
 ---
 
@@ -43,10 +43,10 @@ Classical ML requires training data we do not have. Rules-based matching breaks 
 
 | Trade-off | Mitigation |
 |---|---|
-| Per-call API cost | Negligible at this scale — under $0.05 for all 21 documents |
+| Per-call API cost | Negligible at this scale — under $1 for all 21 documents |
 | Non-determinism across model versions | Pin exact model version, run regression tests on upgrade |
 | External API dependency | Abstract provider behind interface — swap if needed |
-| Context window limits on large docs | Send first page only for classification — type is always apparent from header |
+| Large PDFs increase token usage and latency | Future optimization: classify from representative pages or extracted summaries if cost becomes a concern |
 | PHI sent to external API | Documents de-identified for this exercise. Production requires OpenAI BAA or self-hosted model |
 
 ---

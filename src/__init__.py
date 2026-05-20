@@ -1,1 +1,1 @@
-# ashvin-doc-classifier source package
+# dme-document-classifier source package

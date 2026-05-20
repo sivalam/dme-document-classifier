@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from pathlib import Path
 
 from src.classifier import ClassificationResult, classify
@@ -53,9 +54,13 @@ def run_pipeline(
             content = extract(str(pdf_file))
             result = classify(content, confidence_threshold=confidence_threshold)
             classifications.append(result)
+           
         except Exception as exc:
             logger.exception("Failed to process %s", pdf_file)
             failures.append((str(pdf_file), str(exc)))
+
+        finally:
+            time.sleep(5)  # Reduce TPM/rate-limit pressure during batch runs.
 
     patient_records = check_completeness(classifications)
 

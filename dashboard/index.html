@@ -1,24 +1,454 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DME Document Classifier — Results</title>
-  <style>
-    /* TODO: add styles */
-    body { font-family: sans-serif; margin: 2rem; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DME Document Classifier — Results Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f9; color: #1a1a2e; min-height: 100vh; }
+
+  header { background: #1a1a2e; color: white; padding: 24px 40px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header p { font-size: 13px; color: #8892b0; margin-top: 4px; }
+  .run-meta { text-align: right; font-size: 12px; color: #8892b0; }
+
+  /* Tabs */
+  .tabs { background: #1a1a2e; padding: 0 40px; display: flex; gap: 4px; }
+  .tab { padding: 10px 20px; font-size: 13px; color: #8892b0; cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s; }
+  .tab:hover { color: #ccd6f6; }
+  .tab.active { color: white; border-bottom-color: #64ffda; }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+
+  /* Cards */
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+  .card { background: white; border-radius: 10px; padding: 20px 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  .card .label { font-size: 12px; color: #8892b0; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .card .value { font-size: 32px; font-weight: 700; line-height: 1; }
+  .card .sub { font-size: 12px; color: #8892b0; margin-top: 6px; }
+  .value.green { color: #22c55e; }
+  .value.orange { color: #f59e0b; }
+  .value.red { color: #ef4444; }
+  .value.blue { color: #3b82f6; }
+
+  .section-title { font-size: 15px; font-weight: 600; color: #1a1a2e; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #e2e8f0; }
+
+  /* Patient cards */
+  .patients-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 32px; }
+  .patient-card { background: white; border-radius: 10px; padding: 20px 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); border-left: 4px solid #e2e8f0; }
+  .patient-card.complete { border-left-color: #22c55e; }
+  .patient-card.cannot_start { border-left-color: #ef4444; }
+  .patient-card.in_progress { border-left-color: #f59e0b; }
+  .patient-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .patient-title { font-size: 15px; font-weight: 600; }
+
+  .badge { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .badge.complete { background: #dcfce7; color: #16a34a; }
+  .badge.cannot_start { background: #fee2e2; color: #dc2626; }
+  .badge.in_progress { background: #fef3c7; color: #d97706; }
+  .badge.review { background: #dbeafe; color: #2563eb; }
+  .badge.unknown { background: #f1f5f9; color: #64748b; }
+  .badge.warning { background: #fef3c7; color: #d97706; }
+
+  .doc-list { list-style: none; }
+  .doc-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; color: #374151; border-bottom: 1px solid #f1f5f9; }
+  .doc-item:last-child { border-bottom: none; }
+  .doc-icon { font-size: 14px; width: 18px; text-align: center; }
+
+  .status-box { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
+  .status-box.red { background: #fee2e2; color: #991b1b; }
+  .status-box.amber { background: #fef3c7; color: #92400e; }
+  .status-box strong { display: block; margin-bottom: 4px; }
+
+  /* Findings */
+  .findings-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }
+  .finding-card { background: white; border-radius: 10px; padding: 20px 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  .finding-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #1a1a2e; }
+  .finding-card p { font-size: 12px; color: #64748b; line-height: 1.5; }
+  .finding-card .icon { font-size: 22px; margin-bottom: 10px; }
+
+  /* Table */
+  .table-wrap { background: white; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); overflow: hidden; margin-bottom: 32px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead { background: #f8fafc; }
+  th { padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; border-bottom: 1px solid #e2e8f0; }
+  td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafbfc; }
+  .confidence-bar { display: flex; align-items: center; gap: 8px; }
+  .bar-track { width: 60px; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; background: #22c55e; }
+  .bar-fill.medium { background: #f59e0b; }
+  .bar-fill.low { background: #ef4444; }
+  .reasoning-text { font-size: 12px; color: #64748b; max-width: 300px; line-height: 1.4; }
+  .filename { font-weight: 500; color: #1a1a2e; }
+  .patient-tag { color: #8892b0; font-size: 12px; }
+
+  /* Audit note */
+  .run-note { background: white; border-radius: 10px; padding: 16px 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); margin-bottom: 32px; font-size: 13px; color: #64748b; border-left: 4px solid #3b82f6; }
+  .run-note strong { color: #1a1a2e; }
+
+  /* JSON tab */
+  .json-wrap { background: #0d1117; border-radius: 10px; padding: 24px; overflow-x: auto; margin-bottom: 32px; }
+  .json-wrap pre { color: #e6edf3; font-size: 12px; line-height: 1.6; font-family: "Fira Code", "Consolas", monospace; white-space: pre-wrap; word-break: break-word; }
+  .json-key { color: #79c0ff; }
+  .json-string { color: #a5d6ff; }
+  .json-number { color: #f2cc60; }
+  .json-bool-true { color: #56d364; }
+  .json-bool-false { color: #f85149; }
+
+  /* DB tab */
+  .db-section { background: white; border-radius: 10px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); margin-bottom: 24px; }
+  .db-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .db-section p { font-size: 12px; color: #64748b; margin-bottom: 16px; }
+  .db-table-wrap { overflow-x: auto; }
+  .db-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .db-table th { background: #f8fafc; padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0; }
+  .db-table td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; color: #374151; }
+  .db-table tr:last-child td { border-bottom: none; }
+  .run-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .run-badge.success { background: #dcfce7; color: #16a34a; }
+  .run-badge.failed { background: #fee2e2; color: #dc2626; }
+
+  footer { text-align: center; padding: 24px; font-size: 12px; color: #8892b0; }
+</style>
 </head>
 <body>
-  <h1>DME Document Classifier</h1>
 
-  <!-- TODO: load output/classifications.json and render a results table -->
-  <!-- TODO: load output/completeness.json and render per-patient status -->
+<header>
+  <div>
+    <h1>DME Document Classifier</h1>
+    <p>Patient workflow readiness — pipeline run results</p>
+  </div>
+  <div class="run-meta">
+    <div>Model: gpt-4o-mini</div>
+    <div>Run: 2026-05-19 19:50 UTC</div>
+    <div>Run ID: 20260519T195054Z-e2ff4591</div>
+  </div>
+</header>
 
-  <p><em>Dashboard not yet implemented.</em></p>
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" onclick="showTab('results')">Results</div>
+  <div class="tab" onclick="showTab('json')">JSON Output</div>
+  <div class="tab" onclick="showTab('database')">Database</div>
+</div>
 
-  <script>
-    // TODO: fetch('../output/classifications.json') and populate table
-  </script>
+<!-- ============================================================ -->
+<!-- TAB 1: RESULTS -->
+<!-- ============================================================ -->
+<div id="tab-results" class="tab-content active">
+<div class="container">
+
+  <div class="run-note">
+    <strong>Audit note:</strong> This is run <code>20260519T195054Z-e2ff4591</code> — the second pipeline execution. The first run (<code>20260519T182316Z</code>) failed due to an incorrect OpenAI payload format. Both runs are preserved in the SQLite audit trail. See <code>docs/AI_OBSERVATIONS.md</code> for the full account.
+  </div>
+
+  <div class="summary-grid">
+    <div class="card">
+      <div class="label">Documents Processed</div>
+      <div class="value blue">21</div>
+      <div class="sub">across 4 patients</div>
+    </div>
+    <div class="card">
+      <div class="label">Successfully Classified</div>
+      <div class="value green">18</div>
+      <div class="sub">85.7% success rate</div>
+    </div>
+    <div class="card">
+      <div class="label">Require Human Review</div>
+      <div class="value orange">3</div>
+      <div class="sub">2 rate limits, 1 ambiguous</div>
+    </div>
+    <div class="card">
+      <div class="label">Workflow Ready</div>
+      <div class="value green">2 / 4</div>
+      <div class="sub">Patients 1 and 4 can start</div>
+    </div>
+  </div>
+
+  <div class="section-title">Patient Workflow Readiness</div>
+  <div class="patients-grid">
+
+    <div class="patient-card complete">
+      <div class="patient-header">
+        <div class="patient-title">Patient 1</div>
+        <span class="badge complete">✓ Complete</span>
+      </div>
+      <ul class="doc-list">
+        <li class="doc-item"><span class="doc-icon">✅</span> Compliance Report</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Delivery Ticket</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Order</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Physician Notes</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Prescription</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Sleep Study Report</li>
+      </ul>
+    </div>
+
+    <div class="patient-card cannot_start">
+      <div class="patient-header">
+        <div class="patient-title">Patient 2</div>
+        <span class="badge cannot_start">✗ Cannot Start</span>
+      </div>
+      <ul class="doc-list">
+        <li class="doc-item"><span class="doc-icon">✅</span> Compliance Report</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Delivery Ticket</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Order</li>
+        <li class="doc-item"><span class="doc-icon">🔵</span> Physician Notes <span class="badge review" style="margin-left:6px">Review</span></li>
+        <li class="doc-item"><span class="doc-icon">⚠️</span> Prescription 2 → classified as Order <span class="badge review" style="margin-left:6px">Review</span></li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Sleep Study Report</li>
+      </ul>
+      <div class="status-box red">
+        <strong>Cannot start:</strong>
+        No confirmed Prescription. Physician Notes failed due to rate limit. Both require coordinator review.
+      </div>
+    </div>
+
+    <div class="patient-card cannot_start">
+      <div class="patient-header">
+        <div class="patient-title">Patient 3</div>
+        <span class="badge cannot_start">✗ Cannot Start</span>
+      </div>
+      <ul class="doc-list">
+        <li class="doc-item"><span class="doc-icon">✅</span> Compliance Report</li>
+        <li class="doc-item"><span class="doc-icon">❌</span> Delivery Ticket — not in dataset</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Order</li>
+        <li class="doc-item"><span class="doc-icon">🔵</span> Physician Notes <span class="badge review" style="margin-left:6px">Review</span></li>
+        <li class="doc-item"><span class="doc-icon">❌</span> Prescription — not in dataset</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Sleep Study Report</li>
+      </ul>
+      <div class="status-box red">
+        <strong>Cannot start:</strong>
+        Prescription not in dataset — no clinical authorization to proceed.
+      </div>
+    </div>
+
+    <div class="patient-card in_progress">
+      <div class="patient-header">
+        <div class="patient-title">Patient 4</div>
+        <span class="badge in_progress">⚠ In Progress</span>
+      </div>
+      <ul class="doc-list">
+        <li class="doc-item"><span class="doc-icon">✅</span> Compliance Report</li>
+        <li class="doc-item"><span class="doc-icon">❌</span> Delivery Ticket — not in dataset</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Order</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Physician Notes</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Prescription</li>
+        <li class="doc-item"><span class="doc-icon">✅</span> Sleep Study Report</li>
+      </ul>
+      <div class="status-box amber">
+        <strong>Workflow can start — downstream document missing:</strong>
+        Delivery Ticket not received. Clinical authorization is complete. Billing cannot be triggered until delivery is confirmed.
+      </div>
+    </div>
+
+  </div>
+
+  <div class="section-title">Notable Findings</div>
+  <div class="findings-grid">
+    <div class="finding-card">
+      <div class="icon">🔍</div>
+      <h3>Filename vs Document Content</h3>
+      <p>Prescription 2.pdf was classified as Order (0.90 confidence). The document content strongly resembled an order form despite the filename. Manual review identified this as a labeling ambiguity worth coordinator review.</p>
+    </div>
+    <div class="finding-card">
+      <div class="icon">⚡</div>
+      <h3>Rate Limits Under Batch Load</h3>
+      <p>Physician Notes 2 and 3 hit OpenAI TPM limits during sequential processing. Physician Notes 1 (17 pages) consumed significant token volume immediately before. Both degraded gracefully to Unknown + requires_review rather than crashing the pipeline.</p>
+    </div>
+    <div class="finding-card">
+      <div class="icon">📋</div>
+      <h3>Document Order Dependencies Matter</h3>
+      <p>2 of 4 patients can start their workflow. Missing documents have different operational impact depending on where they sit in the workflow — a missing Prescription blocks everything; a missing Delivery Ticket only blocks the final billing step.</p>
+    </div>
+  </div>
+
+  <div class="section-title">All Documents — Run 20260519T195054Z</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Document</th>
+          <th>Patient</th>
+          <th>Classification</th>
+          <th>Confidence</th>
+          <th>Status</th>
+          <th>Reasoning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="filename">Compliance Report 1.pdf</td><td class="patient-tag">1</td><td><span class="badge complete">Compliance Report</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div>1.00</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">CPAP usage data, compliance percentage and usage hours.</td></tr>
+        <tr><td class="filename">Compliance Report 2.pdf</td><td class="patient-tag">2</td><td><span class="badge complete">Compliance Report</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">CPAP device usage data with compliance percentage and reporting date range.</td></tr>
+        <tr><td class="filename">Compliance Report 3.pdf</td><td class="patient-tag">3</td><td><span class="badge complete">Compliance Report</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Usage data including compliance percentages and reporting dates.</td></tr>
+        <tr><td class="filename">Compliance Report 4.pdf</td><td class="patient-tag">4</td><td><span class="badge complete">Compliance Report</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">CPAP device usage data with compliance percentage and usage hours.</td></tr>
+        <tr><td class="filename">Delivery Ticket 1.pdf</td><td class="patient-tag">1</td><td><span class="badge complete">Delivery Ticket</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Delivery date, patient signature, equipment serial numbers, proof of delivery.</td></tr>
+        <tr><td class="filename">Delivery Ticket 2.pdf</td><td class="patient-tag">2</td><td><span class="badge complete">Delivery Ticket</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Delivery information including patient details, delivery date, and signatures.</td></tr>
+        <tr><td class="filename">Order 1.pdf</td><td class="patient-tag">1</td><td><span class="badge complete">Order</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Standard Written Order with HCPCS codes, equipment list, and physician signature.</td></tr>
+        <tr><td class="filename">Order 2.pdf</td><td class="patient-tag">2</td><td><span class="badge complete">Order</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Standard Written Order with HCPCS codes, equipment list, and physician signature.</td></tr>
+        <tr><td class="filename">Order 3.pdf</td><td class="patient-tag">3</td><td><span class="badge complete">Order</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Standard Written Order with specific equipment codes and details.</td></tr>
+        <tr><td class="filename">Order 4.pdf</td><td class="patient-tag">4</td><td><span class="badge complete">Order</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">HCPCS codes, equipment list, quantities, and physician signature.</td></tr>
+        <tr><td class="filename">Physician Notes 1.pdf</td><td class="patient-tag">1</td><td><span class="badge complete">Physician Notes</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Clinical documentation with medical history and treatment plans. 17 pages — largest document in corpus.</td></tr>
+        <tr style="background:#fef9f0"><td class="filename">Physician Notes 2.pdf</td><td class="patient-tag">2</td><td><span class="badge unknown">Unknown</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill low" style="width:0%"></div></div>0.00</div></td><td><span class="badge review">Review</span></td><td class="reasoning-text">Rate limit exceeded (TPM 200k). Followed large Physician Notes 1 processing.</td></tr>
+        <tr style="background:#fef9f0"><td class="filename">Physician Notes 3.pdf</td><td class="patient-tag">3</td><td><span class="badge unknown">Unknown</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill low" style="width:0%"></div></div>0.00</div></td><td><span class="badge review">Review</span></td><td class="reasoning-text">Rate limit exceeded (TPM 200k).</td></tr>
+        <tr><td class="filename">Physician Notes 4.pdf</td><td class="patient-tag">4</td><td><span class="badge complete">Physician Notes</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Clinical documentation with diagnosis, treatment plans, and medical history.</td></tr>
+        <tr><td class="filename">Prescription 1.pdf</td><td class="patient-tag">1</td><td><span class="badge complete">Prescription</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Rx symbol, DEA number, physician signature, and device ordered.</td></tr>
+        <tr style="background:#fef9f0"><td class="filename">Prescription 2.pdf</td><td class="patient-tag">2</td><td><span class="badge warning">Order</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill medium" style="width:90%"></div></div>0.90</div></td><td><span class="badge review">Review</span></td><td class="reasoning-text">The document content strongly resembled an order form despite the filename. Manual review identified this as a labeling ambiguity worth coordinator review.</td></tr>
+        <tr><td class="filename">Prescription 4.pdf</td><td class="patient-tag">4</td><td><span class="badge complete">Prescription</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">Rx symbol, physician signature, and specific device ordered.</td></tr>
+        <tr><td class="filename">Sleep Study Report 1.pdf</td><td class="patient-tag">1</td><td><span class="badge complete">Sleep Study Report</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">AHI score, sleep stages, and oxygen saturation findings.</td></tr>
+        <tr><td class="filename">Sleep Study Report 2.pdf</td><td class="patient-tag">2</td><td><span class="badge complete">Sleep Study Report</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">AHI score, oxygen saturation, and sleep apnea findings.</td></tr>
+        <tr><td class="filename">Sleep Study Report 3.pdf</td><td class="patient-tag">3</td><td><span class="badge complete">Sleep Study Report</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">AHI scores, sleep stages, and oxygen saturation.</td></tr>
+        <tr><td class="filename">Sleep Study Report 4.pdf</td><td class="patient-tag">4</td><td><span class="badge complete">Sleep Study Report</span></td><td><div class="confidence-bar"><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div>0.95</div></td><td><span class="badge complete">Auto</span></td><td class="reasoning-text">AHI score, sleep stages, oxygen saturation, and polysomnography findings.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 2: JSON OUTPUT -->
+<!-- ============================================================ -->
+<div id="tab-json" class="tab-content">
+<div class="container">
+  <p style="font-size:13px;color:#64748b;margin-bottom:16px;">Raw JSON output from the pipeline run. This is the primary machine-readable output consumed by downstream workflow systems.</p>
+  <div class="json-wrap">
+    <pre id="json-output"></pre>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 3: DATABASE -->
+<!-- ============================================================ -->
+<div id="tab-database" class="tab-content">
+<div class="container">
+
+  <div class="db-section">
+    <h3>Pipeline Runs</h3>
+    <p>The database preserves all runs. Nothing is overwritten — each run appends a new batch of records.</p>
+    <div class="db-table-wrap">
+      <table class="db-table">
+        <thead><tr><th>Run ID</th><th>Timestamp</th><th>Documents</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>20260519T182316Z-0c4933cb</code></td>
+            <td>2026-05-19 18:23 UTC</td>
+            <td>21</td>
+            <td><span class="run-badge failed">Failed — invalid MIME type</span></td>
+          </tr>
+          <tr>
+            <td><code>20260519T195054Z-e2ff4591</code></td>
+            <td>2026-05-19 19:50 UTC</td>
+            <td>21</td>
+            <td><span class="run-badge success">Success</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="db-section">
+    <h3>Equipment Types</h3>
+    <p>Top-level DME categories. Adding support for a new equipment type (cardiac, oxygen, mobility) is a database insert — no code change required.</p>
+    <div class="db-table-wrap">
+      <table class="db-table">
+        <thead><tr><th>ID</th><th>Name</th><th>Description</th><th>Active</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>CPAP</td><td>Continuous Positive Airway Pressure equipment for sleep apnea treatment</td><td>✅</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="db-section">
+    <h3>Document Types — CPAP</h3>
+    <p>All 6 document types for the CPAP workflow. The key identifiers field is injected directly into the LLM classification prompt at runtime. The required field drives the completeness check.</p>
+    <div class="db-table-wrap">
+      <table class="db-table">
+        <thead><tr><th>Document Type</th><th>Key Identifiers</th><th>Required</th></tr></thead>
+        <tbody>
+          <tr><td>Prescription</td><td>Rx symbol, DEA number, physician signature, device ordered</td><td>✅</td></tr>
+          <tr><td>Sleep Study Report</td><td>AHI score, Apnea-Hypopnea Index, sleep stages, oxygen saturation</td><td>✅</td></tr>
+          <tr><td>Physician Notes</td><td>Diagnosis, treatment plan, medical history, SOAP format</td><td>✅</td></tr>
+          <tr><td>Compliance Report</td><td>Usage hours per day, compliance percentage, reporting date range</td><td>✅</td></tr>
+          <tr><td>Order</td><td>HCPCS codes, equipment list, quantities, physician signature</td><td>✅</td></tr>
+          <tr><td>Delivery Ticket</td><td>Delivery date, patient signature, equipment serial numbers</td><td>✅</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="db-section">
+    <h3>Patient Completeness — Successful Run</h3>
+    <p>One row per patient per run. Status is evaluated against required document types from the database.</p>
+    <div class="db-table-wrap">
+      <table class="db-table">
+        <thead><tr><th>Patient</th><th>Status</th><th>Documents Found</th><th>Missing</th><th>Can Start</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><span class="run-badge success">complete</span></td><td>All 6</td><td>None</td><td>✅</td></tr>
+          <tr><td>2</td><td><span class="run-badge failed">cannot_start</span></td><td>Compliance Report, Delivery Ticket, Order, Sleep Study Report</td><td>Physician Notes, Prescription</td><td>❌</td></tr>
+          <tr><td>3</td><td><span class="run-badge failed">cannot_start</span></td><td>Compliance Report, Order, Sleep Study Report</td><td>Delivery Ticket, Physician Notes, Prescription</td><td>❌</td></tr>
+          <tr><td>4</td><td><span class="run-badge warning" style="background:#fef3c7;color:#d97706;">in_progress</span></td><td>Compliance Report, Order, Physician Notes, Prescription, Sleep Study Report</td><td>Delivery Ticket</td><td>⚠️ See note</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:12px;font-size:12px;color:#64748b;">Note: Patient 4 is marked cannot_start by the V1 completeness logic which treats all missing documents equally. In practice Patient 4 can start — a missing Delivery Ticket only blocks the final billing step. This is documented as a V2 improvement in docs/PRD.md section 10.</p>
+  </div>
+
+  <div class="db-section">
+    <h3>Corrections Table</h3>
+    <p>Schema defined in V1, no rows yet. Populated in V2 when a coordinator review UI is built. Every human correction is a future training example for prompt improvement.</p>
+    <div class="db-table-wrap">
+      <table class="db-table">
+        <thead><tr><th>id</th><th>classification_id</th><th>original_type</th><th>corrected_type</th><th>corrected_by</th><th>notes</th></tr></thead>
+        <tbody>
+          <tr><td colspan="6" style="text-align:center;color:#8892b0;font-style:italic;">No corrections recorded yet</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<p style="text-align:center;font-size:12px;color:#8892b0;margin-bottom:24px;">
+  Dashboard is a static visualization generated from sample pipeline output for reviewer inspection.
+</p>
+
+<footer>
+  DME Document Classifier — Engineering Exercise — github.com/sivalam/dme-document-classifier
+</footer>
+
+<script>
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelector(`[onclick="showTab('${name}')"]`).classList.add('active');
+  document.getElementById(`tab-${name}`).classList.add('active');
+}
+
+// Render JSON with syntax highlighting
+const jsonData = {"run_id":"20260519T195054Z-e2ff4591","generated_at":"2026-05-19T19:50:54.604589+00:00","total_documents":21,"documents":[{"filename":"Compliance Report 1.pdf","document_type":"Compliance Report","confidence":1.0,"patient_id":"1","reasoning":"The document contains CPAP usage data, including compliance percentage and usage hours, which are key identifiers for a Compliance Report.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:44:56.930287+00:00","pages_processed":4},{"filename":"Compliance Report 2.pdf","document_type":"Compliance Report","confidence":0.95,"patient_id":"2","reasoning":"The document contains CPAP device usage data, showing patient compliance with specified usage hours, compliance percentage, and reporting date range.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:45:30.714522+00:00","pages_processed":5},{"filename":"Compliance Report 3.pdf","document_type":"Compliance Report","confidence":0.95,"patient_id":"3","reasoning":"The document contains usage data for a CPAP device, including compliance percentages and reporting dates.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:45:40.318969+00:00","pages_processed":2},{"filename":"Compliance Report 4.pdf","document_type":"Compliance Report","confidence":0.95,"patient_id":"4","reasoning":"The document contains CPAP device usage data, including compliance percentage, usage hours, and reporting date range.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:45:47.004875+00:00","pages_processed":1},{"filename":"Delivery Ticket 1.pdf","document_type":"Delivery Ticket","confidence":0.95,"patient_id":"1","reasoning":"The document includes delivery date, patient signature, equipment serial numbers, and serves as proof of delivery.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:45:57.134411+00:00","pages_processed":2},{"filename":"Delivery Ticket 2.pdf","document_type":"Delivery Ticket","confidence":0.95,"patient_id":"2","reasoning":"The document contains delivery information including patient details, delivery date, items delivered, and signatures.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:46:04.626223+00:00","pages_processed":2},{"filename":"Order 1.pdf","document_type":"Order","confidence":0.95,"patient_id":"1","reasoning":"Standard Written Order for DME containing HCPCS codes, equipment list, quantities, and physician signature.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:46:23.400902+00:00","pages_processed":1},{"filename":"Order 2.pdf","document_type":"Order","confidence":0.95,"patient_id":"2","reasoning":"Standard Written Order for DME equipment featuring HCPCS codes, equipment list, quantities, and physician signature.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:46:36.756378+00:00","pages_processed":1},{"filename":"Order 3.pdf","document_type":"Order","confidence":0.95,"patient_id":"3","reasoning":"Standard Written Order for DME equipment with specific equipment codes.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:46:44.820089+00:00","pages_processed":1},{"filename":"Order 4.pdf","document_type":"Order","confidence":0.95,"patient_id":"4","reasoning":"HCPCS codes, equipment list, quantities, and physician signature.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:46:50.939623+00:00","pages_processed":1},{"filename":"Physician Notes 1.pdf","document_type":"Physician Notes","confidence":0.95,"patient_id":"1","reasoning":"Clinical documentation of a patient encounter including medical history, treatment plans, and narrative format.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:47:03.040084+00:00","pages_processed":17},{"filename":"Physician Notes 2.pdf","document_type":"Unknown","confidence":0.0,"patient_id":"2","reasoning":"Classification failed: Rate limit reached (TPM 200000).","requires_review":true,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:47:39.204245+00:00","pages_processed":7},{"filename":"Physician Notes 3.pdf","document_type":"Unknown","confidence":0.0,"patient_id":"3","reasoning":"Classification failed: Rate limit reached (TPM 200000).","requires_review":true,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:48:14.671950+00:00","pages_processed":6},{"filename":"Physician Notes 4.pdf","document_type":"Physician Notes","confidence":0.95,"patient_id":"4","reasoning":"Clinical documentation including diagnosis, treatment plans, medical history, and clinical narrative.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:48:48.768369+00:00","pages_processed":4},{"filename":"Prescription 1.pdf","document_type":"Prescription","confidence":0.95,"patient_id":"1","reasoning":"Rx symbol, DEA number, physician signature, and device ordered.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:48:57.725564+00:00","pages_processed":1},{"filename":"Prescription 2.pdf","document_type":"Order","confidence":0.9,"patient_id":"2","reasoning":"Document contains specific equipment codes, quantities, and electronic physician signature — resembles a standard written order.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:49:11.723554+00:00","pages_processed":1},{"filename":"Prescription 4.pdf","document_type":"Prescription","confidence":0.95,"patient_id":"4","reasoning":"Physician prescription for DME indicated by Rx symbol, physician signature, and specific device ordered.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:49:27.166918+00:00","pages_processed":1},{"filename":"Sleep Study Report 1.pdf","document_type":"Sleep Study Report","confidence":0.95,"patient_id":"1","reasoning":"AHI score, apnea-hypopnea index, sleep stages, and oxygen saturation findings.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:49:41.542683+00:00","pages_processed":3},{"filename":"Sleep Study Report 2.pdf","document_type":"Sleep Study Report","confidence":0.95,"patient_id":"2","reasoning":"AHI score, oxygen saturation, and findings related to sleep apnea.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:50:10.700324+00:00","pages_processed":3},{"filename":"Sleep Study Report 3.pdf","document_type":"Sleep Study Report","confidence":0.95,"patient_id":"3","reasoning":"AHI scores, sleep stages, and oxygen saturation.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:50:21.780427+00:00","pages_processed":3},{"filename":"Sleep Study Report 4.pdf","document_type":"Sleep Study Report","confidence":0.95,"patient_id":"4","reasoning":"AHI score, sleep stages, oxygen saturation, and polysomnography findings.","requires_review":false,"model":"gpt-4o-mini","processed_at":"2026-05-19T19:50:38.041267+00:00","pages_processed":4}],"patients":{"1":{"patient_id":"1","documents_found":["Compliance Report","Delivery Ticket","Order","Physician Notes","Prescription","Sleep Study Report"],"documents_missing":[],"is_complete":true,"can_start_workflow":true},"2":{"patient_id":"2","documents_found":["Compliance Report","Delivery Ticket","Order","Sleep Study Report"],"documents_missing":["Physician Notes","Prescription"],"is_complete":false,"can_start_workflow":false},"3":{"patient_id":"3","documents_found":["Compliance Report","Order","Sleep Study Report"],"documents_missing":["Delivery Ticket","Physician Notes","Prescription"],"is_complete":false,"can_start_workflow":false},"4":{"patient_id":"4","documents_found":["Compliance Report","Order","Physician Notes","Prescription","Sleep Study Report"],"documents_missing":["Delivery Ticket"],"is_complete":false,"can_start_workflow":false}},"exceptions":[{"filename":"Physician Notes 2.pdf","document_type":"Unknown","confidence":0.0,"patient_id":"2","requires_review":true},{"filename":"Physician Notes 3.pdf","document_type":"Unknown","confidence":0.0,"patient_id":"3","requires_review":true}]};
+
+function syntaxHighlight(json) {
+  json = JSON.stringify(json, null, 2);
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function(match) {
+    let cls = 'json-number';
+    if (/^"/.test(match)) {
+      if (/:$/.test(match)) cls = 'json-key';
+      else cls = 'json-string';
+    } else if (/true/.test(match)) cls = 'json-bool-true';
+    else if (/false/.test(match)) cls = 'json-bool-false';
+    return `<span class="${cls}">${match}</span>`;
+  });
+}
+
+document.getElementById('json-output').innerHTML = syntaxHighlight(jsonData);
+</script>
+
 </body>
 </html>

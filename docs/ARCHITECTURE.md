@@ -19,22 +19,26 @@ The pipeline takes a folder of medical PDFs and produces structured, machine-rea
 ┌─────────────────────────────────────────────────────────────────┐
 │                  extractor.py                                   │
 │                                                                 │
-│   Reads each PDF as raw bytes                                   │
-│   No text extraction — model handles that internally            │
-│   Returns: filename, raw bytes, page count                      │
+│   Reads each PDF from local disk                                │
+│   Returns: filename, PDF bytes, page count                      │
+│                                                                 │
+│   No OCR or text extraction performed in V1                     │
+│   PDFs passed directly to OpenAI Files API                      │
+│   Model handles both text and scanned/image-heavy content       │
 └───────────────────────┬─────────────────────────────────────────┘
                         │
                         ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                  classifier.py                                  │
 │                                                                 │
-│   Sends raw PDF bytes to GPT-4o-mini                            │
+│   Sends raw PDF files to GPT-4o-mini Files API                  │
+│   References uploaded files through Responses API               │
 │   Model handles text + scanned image content natively           │
-│   Prompt: taxonomy, output schema, disambiguation guidance      │
+│   Prompt: document type definitions, output schema, disambiguation guidance      │
 │   Returns: { document_type, confidence, reasoning }             │
 │                                                                 │
 │   confidence < 0.80 → requires_review = true                    │
-│   type not in taxonomy → classified as "Unknown"                │
+│   type not in known document types → classified as "Unknown"    │
 └───────────────────────┬─────────────────────────────────────────┘
                         │
                         ▼
@@ -60,13 +64,13 @@ The pipeline takes a folder of medical PDFs and produces structured, machine-rea
 
 ## Key Architectural Decision: Direct PDF Input
 
-The documents in this corpus are a mix of digital PDFs (text-extractable) and scanned image PDFs (photographs, faxes). 57% are scanned with zero extractable text.
+The documents in this corpus are a mix of digital PDFs (text-extractable) and scanned image PDFs (photographs, faxes). A significant portion of the corpus is scanned/image-heavy with little or no extractable text.
 
 Rather than building a custom extraction pipeline to handle both types, we send the raw PDF directly to GPT-4o-mini. The model natively processes both text content and embedded images and handles the extraction internally.
 
 **Why this matters:** This corpus includes handwritten prescriptions, faxed orders, and scanned physician notes. A text-only approach fails on the majority of documents. A vision-only approach works but costs more. Sending the PDF directly lets the model decide how to read each page — simpler code, same accuracy.
 
-**The trade-off:** This couples the pipeline to models that support direct PDF input. If we switch to a model without this capability we need to add an extraction layer. The extractor module is isolated so that change stays contained to one file.
+**The trade-off:** This couples the pipeline to models that support direct PDF input. If we switch to a model without this capability we need to add an extraction layer. The extraction/upload boundary is isolated so future OCR or extraction changes remain localized primarily to extractor/classifier modules.
 
 See ADR-002 for full options comparison. See ADR-004 for model selection rationale.
 
@@ -85,13 +89,13 @@ See ADR-002 for full options comparison. See ADR-004 for model selection rationa
 - Reads the PDF as raw bytes
 - Returns filename, bytes, and page count
 - Intentionally simple — no extraction logic here
-- If we need to add a text/vision extraction path later, this is the only file that changes
+- If we later move to explicit OCR/text extraction, changes remain isolated primarily to extractor/classifier boundaries.
 
 ### `classifier.py` — LLM Classification
 - `classify(content: ExtractedContent) → ClassificationResult`
-- Sends PDF bytes to GPT-4o-mini with classification prompt
+- Uploads PDFs through OpenAI Files API and classifies them through Responses API
 - Parses structured JSON response
-- Retries once on malformed response, then marks as Unknown
+- Retries malformed responses once, then degrades gracefully to Unknown + requires_review
 - Temperature = 0 for consistent output
 
 ### `completeness.py` — Patient File Check
@@ -132,7 +136,10 @@ class ClassificationResult:
 @dataclass
 class PatientStatus:
     patient_id: str
-    status: str                  # "complete" | "incomplete" | "cannot_start"
+    status: str   # "complete" | "cannot_start" | "in_progress"     
+    # V2: add "in_progress" for patients missing only downstream documents
+    # (e.g. Delivery Ticket) where the workflow can still start.
+    # See docs/PRD.md section 10 for full discussion.            
     documents_found: List[str]
     documents_missing: List[str]
     can_start_workflow: bool     # False if Prescription is missing
@@ -140,7 +147,7 @@ class PatientStatus:
 
 ---
 
-## Document Taxonomy
+## Document Types
 
 | Type | Key Identifiers |
 |---|---|
@@ -160,7 +167,7 @@ class PatientStatus:
 |---|---|
 | PDF cannot be opened | Log error, add to exceptions, continue processing |
 | LLM returns malformed JSON | Retry once; if still fails mark as Unknown with requires_review=true |
-| LLM API timeout | Retry with exponential backoff — 3 attempts |
+| LLM API timeout | Retry with exponential backoff (3 attempts) — gracefully surfaces failure for human review, continues batch |
 | Confidence below threshold | Set requires_review=true; result still written to output |
 | Unknown document type | Written to exceptions block in JSON output |
 | Missing patient documents | Surfaced in patients completeness block — not an error |
@@ -252,6 +259,7 @@ Not built in V1 but required before production:
 |---|---|
 | HIPAA compliance | OpenAI BAA or switch to self-hosted model + extraction pipeline |
 | PII redaction | AWS Comprehend Medical or Microsoft Presidio before LLM call |
+| PHI handling strategy | See `docs/HIPAA_AND_PRIVACY.md` for full discussion |
 | Model version pinning | Pin exact version string — never use "latest" in production |
 | Observability | Log model, token count, latency, confidence per call |
 | Cost tracking | Alert when cost per document exceeds threshold |

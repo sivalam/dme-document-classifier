@@ -1,8 +1,8 @@
 # PRD: DME Document Intelligence — Intake & Classification
 
 **Status:** Draft  
-**Author:** Sivalam  
-**Last Updated:** May 19, 2026
+**Author:** Madhavi Sivala  
+**Last Updated:** 2026-05
 
 ---
 
@@ -58,12 +58,12 @@ This is currently done by hand. It is slow, error-prone, and does not scale.
 | Automatically classify all incoming documents by type | ≥ 95% classification accuracy |
 | Detect incomplete patient files at intake | 100% recall on missing document detection |
 | Produce machine-readable output for downstream workflow routing | Valid JSON output for every processed document |
-| Handle real-world document quality (scanned, faxed, handwritten) | Zero failures on image-based PDFs |
+| Handle real-world document quality (scanned, faxed, handwritten) | Graceful handling of image-heavy and scanned PDFs |
 | Surface exceptions for human review | Low-confidence classifications flagged, not silently passed |
 
 ---
 
-## 4. Out of Scope (V1)
+## 4. Non-Goals (V1)
 
 - Extracting structured data fields from documents (V2)
 - Routing documents to downstream workflow agents (V2)
@@ -118,7 +118,6 @@ This is currently done by hand. It is slow, error-prone, and does not scale.
 - JSON output with defined schema
 - CSV output for human spot-checking
 - SQLite database for persistence, audit trail, and analytics
-- All outputs written atomically
 
 ---
 
@@ -128,10 +127,9 @@ This is currently done by hand. It is slow, error-prone, and does not scale.
 **So that** the pipeline does not silently fail on the majority of real-world inputs.
 
 **Acceptance criteria:**
-- System auto-detects whether a PDF is text-extractable or image-based
-- Image-based PDFs rendered and sent to the LLM vision API
-- No manual intervention required for either document type
-- Processing strategy logged per document
+- System supports both text-heavy and scanned/image-heavy PDFs
+- Processing failures degrade gracefully to human review
+- Processing strategy and failures logged per document
 
 ---
 
@@ -178,3 +176,47 @@ Maintains, debugs, and improves the pipeline. Benefits from audit logs, confiden
 - **V3 — Real-time service:** Replace batch script with async queue-based service
 - **V4 — Feedback loop:** Human corrections feed back into prompt improvement and eventual fine-tuning
 - **V5 — Prior auth automation:** Submit to insurance payers based on extracted clinical data
+
+---
+
+## 9. Known Limitations & Assumptions
+
+### Document Types Are CPAP-Specific
+The current taxonomy covers 6 document types specific to CPAP/sleep apnea 
+workflows. In production, DME providers handle many equipment types:
+
+| Equipment Type | Examples of Additional Document Types |
+|---|---|
+| Cardiac monitoring | EKG reports, cardiac event records |
+| Oxygen therapy | Oxygen saturation reports, ABG results |
+| Mobility (wheelchairs) | Functional assessment, mobility evaluation |
+| Hospital beds | Home safety evaluation, physician attestation |
+
+The "Unknown" classification is the safety valve — unrecognized document 
+types are flagged for human review rather than misclassified.
+
+**V2 requirement:** The document types should be configurable per DME provider 
+type so the pipeline can serve all equipment categories without a code change.
+
+---
+
+## 10. Workflow Order Dependencies — V2 Completeness Improvement
+
+The V1 completeness check treats all missing documents equally. Running the pipeline against real data revealed this is insufficient.
+
+Documents have workflow order dependencies:
+
+| Document | Position | If Missing |
+|---|---|---|
+| Prescription | Start — clinical authorization | Workflow cannot begin |
+| Sleep Study Report | Early — medical necessity | Cannot get prior authorization |
+| Physician Notes | Early — clinical justification | Cannot get prior authorization |
+| Order | Mid — equipment fulfillment | Cannot order equipment |
+| Delivery Ticket | End — proof of delivery | Cannot trigger billing, but earlier steps can proceed |
+| Compliance Report | Ongoing — coverage renewal | Cannot renew, but initial workflow can proceed |
+
+**V1 behavior:** Patient 4 (missing only Delivery Ticket) was marked cannot_start. This was incorrect — Patient 4 can start their workflow, they just cannot trigger billing at the end.
+
+**V2 requirement:** Each document type should carry a `workflow_position` and `blocks` field in the database. The completeness check should evaluate workflow readiness at each stage, not just overall presence or absence.
+
+This is a natural extension of the database-driven document type configuration design in ADR-005.
